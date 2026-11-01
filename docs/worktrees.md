@@ -14,7 +14,7 @@ Read worker reports and diffs; rerun checks only for missing or thin evidence, r
 workers, `server/` or `shared/` changes, or surprises in the diff, then land and call `workspace submit`.
 The lander is the final gate and the only way to main: code, no model. It runs every configured check (here
 `pnpm check`, then `pnpm test` and `pnpm test:e2e` in parallel) on the merged result, a failing check once more, then
-fast-forwards the branch and pushes to `lander.push` (here `origin`), so keep working while it runs.
+fast-forwards the branch and pushes to `lander.push` (here `fork`), so keep working while it runs.
 A conflict or a check that failed twice comes back to the submitter as a waking report: fix it in the workspace (a
 flaky test at its cause, or delete it) and submit again. A landing is the end of the branch's work: its report is a
 note in the branch, the branch is concluded unless work is still under way (a subagent, a reply it waits for, queued
@@ -25,9 +25,9 @@ For `server/` or `shared/` changes, an authorized `restart` works once the runni
 
 ### Standing permission to push this repository
 
-The user authorizes the top-level agent to commit verified changes, land them, and push the destination branch
-(normally `main`) to this repository's GitHub remote, `origin` (`HazAT/ultimate`), without asking again. This permission
-applies to this repository whether public or private, not to other repositories. `workspace submit` covers this: the
+The top-level agent must commit verified changes, land them on `main`, and push to this repository's `fork` remote
+(`mchowning/ultimate`) without asking again. Completed work must not remain uncommitted or unpushed. The `upstream`
+remote (`HazAT/ultimate`) is fetch-only. This permission applies to this repository, not to other repositories. `workspace submit` covers this: the
 lander pushes after its checks because `lander.push` is set. Subagents commit and report; only the top-level agent
 submits.
 

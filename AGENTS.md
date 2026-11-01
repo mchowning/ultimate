@@ -82,9 +82,10 @@ New UI is a new extension folder, not a change to `web/`: follow the `write-exte
 
 ## Push permission
 
-The top-level agent may commit verified work, land it and normally push the destination branch to `origin`
-(`HazAT/ultimate`), public or private, without asking. `workspace submit` runs checks and pushes. Subagents commit
-and report, never push. Preserve remote advancement with a
+After completing and verifying changes, the top-level agent must commit them, land them on `main` and push to
+`fork/main` (`mchowning/ultimate`). Completed work must not remain uncommitted or unpushed. `workspace submit` runs
+checks and pushes to `fork`. Subagents commit and report, never push. `upstream` (`HazAT/ultimate`) is for fetching
+upstream changes only; never push to it. If verification or pushing fails, report the blocker and preserve the work. Preserve remote advancement with a
 non-destructive merge in an isolate, inspect it and rerun checks; stop for ambiguous conflicts, failed checks,
 security concerns or any force push/history rewrite. Never push secrets or unrelated unverified work.
 This permission does not cover other repositories, releases, publishing, deployments or GitHub issue/PR changes.
