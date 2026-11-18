@@ -2,11 +2,14 @@
  * Subagents: conversations delegated to agent definitions, and the standing agents. Other extensions create
  * configured child conversations and open standing agents here; definitions themselves are read with `lib/agents.ts`.
  */
-import type { Context } from '@earendil-works/chord'
+import type { Context } from '@earendil-works/chord/context'
 import { defineDoc } from '@earendil-works/pi-durable'
-import type { ConversationId, EntryId, TaskId, Tx } from '@earendil-works/pi-durable'
+import type { Agent, ConversationId, EntryId, TaskId, Tx } from '@earendil-works/pi-durable'
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
+import type { AgentDefinition } from '../../lib/agents.ts'
 import { defineApi } from '../../shared/extension-api.ts'
-import { StandingDoc } from './refs.ts'
+import { RunsDoc, StandingDoc } from './refs.ts'
+import type { Run } from './refs.ts'
 import type { createChild } from './children.ts'
 
 export { Started, StandingDoc } from './refs.ts'
@@ -57,8 +60,22 @@ export const Standing = defineDoc<Record<string, ConversationId>>({
   initial: () => ({}),
 })
 
-/** The definition a conversation was configured from: children (including automation runs) and standing agents. */
-export const Profile = defineDoc<{ definition?: string }>({
+/** `{ [conversationId]: Run }` of the children `subagent start` made, on the root, for the sidebar and call cards. */
+export const Runs = defineDoc<Record<string, Run>>({
+  kind: RunsDoc.kind,
+  checkpointWhen: () => false,
+  version: 1,
+  scope: 'conversation',
+  history: 'latest',
+  fork: 'initial',
+  initial: () => ({}),
+})
+
+/**
+ * The definition a conversation was configured from: children (including automation runs) and standing agents. An agent
+ * made on the fly has none: `adhoc`, so nothing looks a definition up by its label.
+ */
+export const Profile = defineDoc<{ definition?: string; adhoc?: true }>({
   kind: 'ultimate.agent-profile',
   checkpointWhen: () => false,
   version: 1,
@@ -78,6 +95,16 @@ export type SubagentsService = {
     tx: Tx,
     options: Parameters<typeof createChild>[2],
   ) => ReturnType<typeof createChild>
+  /**
+   * Refresh, inside `tx`, conversation `id` from `definition` (read fresh, e.g. with `discoverAgents`) over
+   * `parentAgent`: its current tools, extensions and instructions; the model and thinking chosen in it stay unless the
+   * definition pins them.
+   */
+  reconfigure: (
+    tx: Tx,
+    id: ConversationId,
+    options: { definition: AgentDefinition; parentAgent: Agent; modelRuntime: ModelRuntime },
+  ) => Promise<void>
 }
 /** Child conversations and standing agents; `need` it where delegation is required, else `want` it. */
 export const SubagentsApi = defineApi<SubagentsService>()('subagents')

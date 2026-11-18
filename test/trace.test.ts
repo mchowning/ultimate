@@ -1,3 +1,4 @@
+import type { ConversationId } from '@earendil-works/pi-durable'
 import { mkdir, symlink, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux'
@@ -66,7 +67,7 @@ export default (host) => {
   return defineExtension({ name: 'delta' })
 }`,
   tooler: `${tokens}
-import { Type } from '@earendil-works/pi-ai'
+import { obj } from '@earendil-works/pi-schema'
 export default (host) => {
   const delta = host.need(Delta)
   return defineExtension({
@@ -74,7 +75,7 @@ export default (host) => {
     tools: [defineTool({
       name: 'probe',
       description: 'Calls delta',
-      parameters: Type.Object({}),
+      parameters: obj({}),
       execute: async (_args, api, ctx) => {
         await api.commit(async () => delta.note({ tool: true }), ctx)
         return { output: [{ type: 'text', text: 'probed' }] }
@@ -125,7 +126,7 @@ it('traces an action through a service, its event and a reactor into another ser
     'go',
     { token: 'sentinel-token', nested: { secret: 's', value: 1 } },
     signal,
-    conversation,
+    conversation as ConversationId,
   )
   expect(result).toEqual({
     done: true,
@@ -204,11 +205,10 @@ it('links a tool call to its conversation and tool-call entry, with service call
   ])
   await server.root.submit({ type: 'input', content: 'probe' }, context)
   await server.harness.waitForIdle(context)
-  const view = await server.root.viewState(context)
-  const assistant = view.value.entries.find(
+  const view = await server.root.context(context)
+  const assistant = view.entries.find(
     (entry) => entry.kind === 'pi.assistant' && JSON.stringify(entry.model).includes('"toolCall"'),
   )!
-  view.dispose()
   const tool = server.extensions.trace.query().find((row) => row.kind === 'tool')!
   expect(tool).toMatchObject({
     caller: 'agent',
@@ -273,7 +273,10 @@ it('records a failed model call by classification only, never the provider messa
   const faux = fauxProvider()
   const collection = createModels()
   collection.setProvider(faux.provider)
-  const models = guardToolArguments(collection, { begin: trace.begin, conversationOf: () => 7 })
+  const models = guardToolArguments(collection, {
+    begin: trace.begin,
+    conversationOf: () => 7 as ConversationId,
+  })
   // Provider messages can echo the request: a prompt or a key must not reach the row.
   const errorMessage =
     '429 rate_limit_error: request "SENTINEL-PROMPT tell me the plan" with key sk-SENTINEL-SECRET'

@@ -1,12 +1,12 @@
-import { execFile } from 'node:child_process'
-import type { JsonValue } from '@earendil-works/chord'
+import type { ConversationId } from '@earendil-works/pi-durable'
+import { exec } from '../lib/exec.ts'
+import type { JsonValue } from '@earendil-works/chord/json'
 import type { Device } from '../shared/events.ts'
 import type { ExtensionHost } from './extensions.ts'
 
 export interface ActionContext {
   host: ExtensionHost
-  conversationId?: number
-  /** The browser that asked, for a call from the UI; agents' calls have none. */
+  conversationId?: ConversationId
   device?: Device
   signal: AbortSignal
   exec(
@@ -21,21 +21,11 @@ export type ExtensionAction = (
 ) => JsonValue | Promise<JsonValue>
 export function actionExec(projectRoot: string, signal: AbortSignal): ActionContext['exec'] {
   return (command, args, options = {}) =>
-    new Promise((resolve, reject) => {
-      execFile(
-        command,
-        args,
-        {
-          cwd: options.cwd ?? projectRoot,
-          signal,
-          timeout: Math.max(1, Math.min(options.timeout ?? 30000, 30000)),
-          killSignal: 'SIGKILL',
-          maxBuffer: 1024 * 1024,
-        },
-        (error, stdout, stderr) => {
-          if (error) reject(error)
-          else resolve({ stdout, stderr })
-        },
-      )
+    exec(command, args, {
+      cwd: options.cwd ?? projectRoot,
+      signal,
+      timeout: Math.max(1, Math.min(options.timeout ?? 30000, 30000)),
+      killSignal: 'SIGKILL',
+      maxBuffer: 1024 * 1024,
     })
 }

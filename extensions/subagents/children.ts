@@ -10,16 +10,13 @@ import type {
 } from '@earendil-works/pi-durable'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import { definitionAgent } from '../../lib/agents.ts'
+import { definitionAgent, definitionFamily } from '../../lib/agents.ts'
+import { Family } from '../models/api.ts'
 import type { AgentDefinition } from '../../lib/agents.ts'
 import { ConversationsApi } from '../conversations/api.ts'
 import { Started } from './refs.ts'
 import { Profile } from './api.ts'
 
-/**
- * Emit `subagents.started` for `conversation`, configured in `tx` to run as `agent`: its model and thinking level as
- * configured, and its parent, the owner or else the fork source.
- */
 export async function started(
   host: Pick<ExtensionHost, 'emit'>,
   tx: Tx,
@@ -39,10 +36,25 @@ export async function started(
   })
 }
 
-/**
- * A conversation configured from a definition (or as a copy of the parent's agent), new or forked at `fork.at`; a
- * definition with `summaries: false` turns its automatic summaries off.
- */
+export async function reconfigure(
+  tx: Tx,
+  id: ConversationId,
+  definition: AgentDefinition,
+  parent: Agent,
+  modelRuntime: ModelRuntime,
+) {
+  const own = await tx.doc(AgentDoc, id)
+  const currentModelSettings = {
+    ...parent,
+    ...(own.model ? { model: own.model } : {}),
+    ...(own.thinkingLevel ? { thinkingLevel: own.thinkingLevel } : {}),
+  }
+  const change = definitionAgent(definition, currentModelSettings, modelRuntime)
+  await configure(tx, id, change)
+  ;(await tx.doc(Family, id)).name = definitionFamily(definition, change)
+  ;(await tx.doc(Profile, id)).definition = definition.name
+}
+
 export async function createChild(
   host: Pick<ExtensionHost, 'need'>,
   tx: Tx,
@@ -60,6 +72,7 @@ export async function createChild(
     excludeExtensions?: string[]
     model?: { provider: string; modelId: string }
     thinking?: ModelThinkingLevel
+    adhoc?: true
   },
 ) {
   const { parentAgent: parent, definition, modelRuntime } = options
@@ -73,11 +86,15 @@ export async function createChild(
     ...change,
     cwd: options.cwd ?? parent.cwd ?? null,
   })
+  const family = await tx.doc(Family, child.id)
+  const familyClearedByExplicitModel = options.model ? null : definitionFamily(definition, change)
+  family.name = familyClearedByExplicitModel
   Object.assign(await tx.doc(options.metadata, child.id), {
     label: options.label,
     title: options.title,
   })
-  if (definition) (await tx.doc(Profile, child.id)).definition = definition.name
+  if (options.adhoc) (await tx.doc(Profile, child.id)).adhoc = true
+  else if (definition) (await tx.doc(Profile, child.id)).definition = definition.name
   if (definition?.summaries === false)
     await host.need(ConversationsApi).setAutomaticSummaries(tx, child.id, false)
   return child

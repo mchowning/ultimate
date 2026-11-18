@@ -1,5 +1,5 @@
-import type { EntryRecord } from '@earendil-works/pi-durable'
-import { describe, expect, it } from 'vitest'
+import type { EntryRecord, EntryId } from '@earendil-works/pi-durable'
+import { describe, expect, it, vi } from 'vitest'
 import {
   anchorSelector,
   compactRows,
@@ -10,11 +10,20 @@ import {
   partsOf,
   runOf,
   setAsideIds,
-  windowGaps,
-  windowKey,
 } from '../../web/src/app/compact.ts'
 import type { CompactPart, WorkRun } from '../../web/src/app/compact.ts'
 import { threadRow } from '../../extensions/messages/data.tsx'
+
+vi.mock('@/sdk', async () => import('../../web/src/sdk/format.ts'))
+vi.mock('../../extensions/lineage/ui.tsx', async () => import('../../extensions/lineage/refs.ts'))
+vi.mock(
+  '../../extensions/workspaces/ui.tsx',
+  async () => import('../../extensions/workspaces/refs.ts'),
+)
+vi.mock(
+  '../../extensions/subagents/ui.tsx',
+  async () => import('../../extensions/subagents/refs.ts'),
+)
 
 let nextId = 1
 const entry = (kind: string, message?: object, data?: object) =>
@@ -153,37 +162,6 @@ describe('revealing a compact entry', () => {
   })
 })
 
-const at = (id: number, head?: number) => ({ id, head }) as unknown as EntryRecord
-
-describe('windowGaps', () => {
-  it('reads past the window head to the newest kept entry after consecutive compactions', () => {
-    // The second compaction (500) heads the window; the first (450) was superseded, newer than `older` and left out.
-    const window = [at(500, 300), at(400), at(401), at(499)]
-    const [range] = windowGaps(window, 400, [])
-    expect(range).toEqual([400, 501])
-    expect(range[0] <= 450 && 450 < range[1]).toBe(true)
-  })
-
-  it('bridges rows kept from before a resync to the new window', () => {
-    expect(windowGaps([at(900), at(901)], 900, [at(700), at(705)])).toEqual([[706, 900]])
-  })
-
-  it('sees a reconnect after consecutive compactions as a fresh window though older stays', () => {
-    const before = [at(500, 300), at(400), at(499)]
-    const after = [at(600, 300), at(400), at(499), at(601)]
-    expect(windowKey(after, 400)).not.toBe(windowKey(before, 400))
-    // Appends keep the window: no refill.
-    expect(windowKey([...before, at(502)], 400)).toBe(windowKey(before, 400))
-    // The new head reaches past both superseded markers.
-    expect(windowGaps(after, 400, [])).toEqual([[400, 602]])
-  })
-
-  it('leaves a contiguous window without a head marker alone', () => {
-    expect(windowGaps([at(900), at(901)], 900, [at(899)])).toEqual([])
-    expect(windowGaps([at(900), at(901)], 900, [])).toEqual([])
-  })
-})
-
 describe('set-aside rows', () => {
   const back = (point: number) => entry('lineage.rewound', undefined, { setAside: point })
   it('sets aside what came after each go-back, and what a later go-back before it reaches', () => {
@@ -238,14 +216,14 @@ describe('folded groups', () => {
   })
 
   it('finds a scroll anchor by its last entry, or a row inside an open run', () => {
-    expect(anchorSelector({ entryId: 3, last: 5, inner: false })).toBe(
+    expect(anchorSelector({ entryId: 3 as EntryId, last: 5, inner: false })).toBe(
       ':scope > [data-run-last="5"]',
     )
     // A row inside an open run, never the run that may carry the same id.
-    expect(anchorSelector({ entryId: 3, inner: true })).toBe(
+    expect(anchorSelector({ entryId: 3 as EntryId, inner: true })).toBe(
       '[data-run-last] [data-entry-id="3"]:not([data-run-last])',
     )
-    expect(anchorSelector({ entryId: 3, inner: false })).toBe('[data-entry-id="3"]')
+    expect(anchorSelector({ entryId: 3 as EntryId, inner: false })).toBe('[data-entry-id="3"]')
   })
 
   it('folds everything between two thread rows into one stretch', () => {

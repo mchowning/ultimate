@@ -14,11 +14,15 @@ export const servers: Awaited<ReturnType<typeof createServer>>[] = []
 const directories: string[] = []
 afterEach(async () => {
   vi.restoreAllMocks()
-  for (const server of servers.splice(0)) {
+  // Take both lists before the first await: a hook still running past its timeout must not delete the next test's
+  // directories (first seen in messages.test.ts; server.test.ts timed out in this hook too).
+  const closing = servers.splice(0)
+  const taken = directories.splice(0)
+  for (const server of closing) {
     await server.vite.watcher.close()
     await server.close()
   }
-  for (const directory of directories.splice(0)) await removeTemp(directory)
+  for (const directory of taken) await removeTemp(directory)
 })
 export async function fixture(extra = false, sources?: Record<string, string>, empty = false) {
   const directory = await temp()
@@ -94,15 +98,15 @@ export async function fixture(extra = false, sources?: Record<string, string>, e
   servers.push(server)
   return { server, options }
 }
-const counterSource = `import { Type } from '@earendil-works/pi-ai'
+const counterSource = `import { obj } from '@earendil-works/pi-schema'
 import { defineDoc, defineExtension, defineTool, section } from '@earendil-works/pi-durable'
 import { value } from './value.ts'
 export const Counter = defineDoc({ kind: 'test.counter', checkpointWhen: () => false, version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ count: 0 }) })
 export const docs = [Counter]
-export default defineExtension({ name: 'counter', sections: [section('counter', () => value)], tools: [defineTool({ name: 'increment', description: 'Increment', parameters: Type.Object({}), execute: async (_args, api, context) => { await api.commit(async tx => { (await tx.doc(Counter, api.conversationId)).count++ }, context); return {} } })] })`
+export default defineExtension({ name: 'counter', sections: [section('counter', () => value)], tools: [defineTool({ name: 'increment', description: 'Increment', parameters: obj({}), execute: async (_args, api, context) => { await api.commit(async tx => { (await tx.doc(Counter, api.conversationId)).count++ }, context); return {} } })] })`
 
 export const orderedSource = (name: string, order = 0) => `
-import { Type } from '@earendil-works/pi-ai'
+import { obj } from '@earendil-works/pi-schema'
 import { defineExtension, defineTool, section } from '@earendil-works/pi-durable'
 export const order = ${order}
-export default defineExtension({ name: '${name}', sections: [section('${name === '0-new' ? 'new' : name}', () => '${name}')], tools: [defineTool({ name: '${name === '0-new' ? 'new' : name}', description: '${name}', parameters: Type.Object({}), execute: async () => ({}) })] })`
+export default defineExtension({ name: '${name}', sections: [section('${name === '0-new' ? 'new' : name}', () => '${name}')], tools: [defineTool({ name: '${name === '0-new' ? 'new' : name}', description: '${name}', parameters: obj({}), execute: async () => ({}) })] })`

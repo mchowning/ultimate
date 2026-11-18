@@ -1,3 +1,6 @@
+import { parseConversationId } from '../../lib/ids.ts'
+import type { ConversationId } from '@earendil-works/pi-durable'
+import { ROOT } from '@/sdk'
 import {
   GitBranchIcon,
   GitMergeIcon,
@@ -27,6 +30,7 @@ import {
   provide,
   Provided,
   useConversation,
+  useConversationSummary,
   useDocOf,
   useStore,
   useToolDuration,
@@ -35,14 +39,14 @@ import {
 } from '@/sdk'
 import type { ToolCallView } from '@/sdk'
 import { ConversationTask } from '../conversations/ui.tsx'
-import { stateLabel, useWorkspaceConversations as useConversations } from '../workspaces/ui.tsx'
+import { stateLabel, useWorkspaces } from '../workspaces/ui.tsx'
 import type { Workspace as Isolate, LandResult } from '../workspaces/types.ts'
 import { agentsPanel } from '../models/ui.tsx'
 import { DefinitionDialog } from './definitions.tsx'
 import { AgentsOverview } from './overview.tsx'
 import { Tag } from './parts.tsx'
 import { AgentInbox, AgentInput, AgentMessages } from './messages.tsx'
-import { openAgentSource, talkToUltimate } from './ui.tsx'
+import { openAgentSource, RunName, talkToUltimate } from './ui.tsx'
 import { StandingAction, StandingDoc } from './refs.ts'
 import { landing } from './landing.ts'
 
@@ -70,9 +74,8 @@ function StateTag({ isolate }: { isolate: Isolate }) {
   )
 }
 
-/** The call card's compact workspace: branch and state from the child's summary. */
 function IsolateBadge({ childId }: { childId: number }) {
-  const isolate = useConversations().find((conversation) => conversation.id === childId)?.workspace
+  const isolate = useWorkspaces()[String(childId)]
   if (!isolate) return null
   return (
     <span
@@ -85,20 +88,24 @@ function IsolateBadge({ childId }: { childId: number }) {
   )
 }
 
-/** One `subagent` call: who got which task, how the child is doing, its answer, and a way into it. */
 function SubagentCall({ call }: { call: ToolCallView }) {
   const duration = useToolDuration(call)
   const { switchConversation } = useUltimate()
   const id = useConversation((conversation) => conversation.id)
-  const conversations = useConversations()
   const action = text(call.args.action) || 'start'
   const details = call.details as
-    | { conversationId?: number; background?: boolean; yielded?: boolean; answerId?: number }
+    | {
+        conversationId?: ConversationId
+        background?: boolean
+        yielded?: boolean
+        answerId?: number
+      }
     | undefined
   const childId =
-    details?.conversationId ?? (typeof call.args.id === 'number' ? call.args.id : undefined)
-  const child = conversations.find((conversation) => conversation.id === childId)
-  const agent = text(call.args.agent) || child?.label
+    details?.conversationId ??
+    (typeof call.args.id === 'number' ? parseConversationId(call.args.id) : undefined)
+  const child = useConversationSummary(childId)
+  const agent = child?.label || text(call.args.label) || text(call.args.agent)
   const background = call.args.background === true || details?.background === true
   const instruction = action === 'start' ? text(call.args.task) : text(call.args.text)
   const finished = call.status === 'done' || call.status === 'error'
@@ -107,7 +114,10 @@ function SubagentCall({ call }: { call: ToolCallView }) {
   const title: ReactNode =
     action === 'start' ? (
       <>
-        <span className="text-brand">{agent ?? '…'}</span> {instruction}
+        <span className="text-brand">
+          <RunName id={childId} label={agent || '…'} />
+        </span>{' '}
+        {instruction}
       </>
     ) : action === 'list' ? (
       'list children'
@@ -176,7 +186,7 @@ function SubagentCall({ call }: { call: ToolCallView }) {
         {!finished && call.status !== 'interrupted' && (
           <ToolSection>
             <Shimmer className="text-[12px]">
-              {child?.busy ? `${agent ?? 'subagent'} is working…` : 'starting…'}
+              {child?.busy ? `${agent || 'subagent'} is working…` : 'starting…'}
             </Shimmer>
           </ToolSection>
         )}
@@ -200,7 +210,6 @@ function SubagentCall({ call }: { call: ToolCallView }) {
   )
 }
 
-/** The `land` and `discard` actions' JSON result: what landed, at which tip, touching which paths. */
 function Landed({ output }: { output: string }) {
   let result: LandResult
   try {
@@ -232,7 +241,7 @@ function Landed({ output }: { output: string }) {
             : 'Nothing new to land'}
         </p>
         {result.needsRestart && (
-          <p className="text-warning">Needs restart to apply server/ or shared/ changes.</p>
+          <p className="text-warning">Needs restart to apply core or package changes.</p>
         )}
       </ToolSection>
       {commits.length > 0 && (
@@ -283,10 +292,9 @@ function Landed({ output }: { output: string }) {
   )
 }
 
-/** The `list` action's JSON rows. */
 function ChildList({ output }: { output: string }) {
   const { switchConversation } = useUltimate()
-  let rows: { conversationId: number; agent: string; background: boolean; busy: boolean }[]
+  let rows: { conversationId: ConversationId; agent: string; background: boolean; busy: boolean }[]
   try {
     rows = JSON.parse(output)
   } catch {
@@ -302,7 +310,9 @@ function ChildList({ output }: { output: string }) {
           type="button"
         >
           {row.busy ? <BusyDot /> : <span className="size-1.5" />}
-          <span className="text-brand">{row.agent}</span>
+          <span className="text-brand">
+            <RunName id={row.conversationId} label={row.agent} />
+          </span>
           <span className="text-muted-foreground/70">#{row.conversationId}</span>
           {row.background && <Tag>bg</Tag>}
         </button>
@@ -311,7 +321,6 @@ function ChildList({ output }: { output: string }) {
   )
 }
 
-/** An error card's report goes into @ultimate's draft, unsent, beside whatever the user had typed there. */
 function useErrorReport() {
   const { switchConversation, showSurface, focusComposer } = useUltimate()
   return {
@@ -329,17 +338,15 @@ function useErrorReport() {
   }
 }
 
-/** With no conversation chosen, show @ultimate's (see `landing`). */
 function LandOnUltimate() {
   const loaded = useStore((state) => state.shared !== undefined)
   const [chosen] = useUiState<number | null>('shell.conversation', null)
-  const standing = useDocOf(1, StandingDoc)
+  const standing = useDocOf(ROOT, StandingDoc)
   const { switchConversation } = useUltimate()
   const target = landing(loaded, chosen ?? undefined, standing)
   useEffect(() => {
     if (target === undefined) return
     if (target !== 'create') return switchConversation(target, { replace: true })
-    // A fresh home (a preview) has no @ultimate yet: start it, as its sidebar row does.
     api
       .action(StandingAction, { name: 'ultimate' })
       .then((id) => switchConversation(id, { replace: true }))

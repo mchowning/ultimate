@@ -1,3 +1,4 @@
+import type { ConversationId } from '@earendil-works/pi-durable'
 import { createElement as h, Fragment } from 'react'
 import type { EffectCallback, ReactElement, ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -41,7 +42,9 @@ vi.mock('../../web/src/sdk/client.ts', async () => {
     fetch: harness.fetch,
     retryMs: 5,
   })
-  return { store, api: createApi(store, { fetch: harness.fetch }), registry: createRegistry() }
+  const { createReads } = await import('../../web/src/sdk/reads.ts')
+  const api = createApi(store, { fetch: harness.fetch })
+  return { store, api, reads: createReads(api, store), registry: createRegistry() }
 })
 vi.mock('../../web/src/sdk/resume.ts', () => ({ covered: () => false }))
 vi.mock('@/components/ai/prompt-input', () => ({
@@ -140,7 +143,7 @@ function view(id: number, text: string, busy = false): StreamedView {
     ],
     docs: {
       'pi.agent': { model: { provider: 'faux', modelId: 'faux-1' } },
-      'pi.live': busy ? { run: { taskId: 2, inputs: [] } } : {},
+      'pi.live': busy ? { run: { taskId: 2, inputs: [], turns: 0 } } : {},
       'pi.inbox': { items: [{ id: id * 100, mode: 'steer', content: `queued ${id}` }] },
     },
   } as unknown as StreamedView
@@ -157,7 +160,8 @@ function Probe() {
     JSON.stringify({ id, selected, entries, transcript, doc, ultimate: ultimate.conversationId }),
   )
 }
-const scoped = (id: number, children: ReactNode) => h(ConversationScope, { id, children })
+const scoped = (id: number, children: ReactNode) =>
+  h(ConversationScope, { id: id as ConversationId, children })
 function renderScopes() {
   return renderToStaticMarkup(h(Fragment, null, scoped(7, h(Probe)), scoped(9, h(Probe)), h(Probe)))
 }
@@ -193,7 +197,7 @@ it('keeps two scoped snapshots, ops, transcripts and documents independent of th
   )
   expect(nested).toContain('nine live')
   expect(nested).not.toContain('parent history')
-  store.show(11)
+  store.show(11 as ConversationId)
   await tick()
   expect(source(7).closed).toBe(false)
   expect(source(9).closed).toBe(false)
@@ -201,8 +205,8 @@ it('keeps two scoped snapshots, ops, transcripts and documents independent of th
 })
 
 it('shares scopes, reconnects from a snapshot, ignores stale streams, and releases the last view', async () => {
-  const release = store.watchConversation(7)
-  const again = store.watchConversation(7)
+  const release = store.watchConversation(7 as ConversationId)
+  const again = store.watchConversation(7 as ConversationId)
   await tick()
   const first = source(7)
   expect(harness.server!.subscriptions.filter((item) => item.conversation === 7)).toHaveLength(1)
@@ -245,7 +249,7 @@ it('renders <ConversationScope><Conversation/></ConversationScope> and sends, st
       },
     }),
   })
-  const release = store.watchConversation(17)
+  const release = store.watchConversation(17 as ConversationId)
   effects.push(release)
   await tick()
   source().send('view', view(1, 'other transcript'))
@@ -315,15 +319,57 @@ it('renders <ConversationScope><Conversation/></ConversationScope> and sends, st
   expect(harness.fetch).toHaveBeenLastCalledWith('/api/conversations/17/abort', expect.anything())
 })
 
+it('sends on Cmd or Ctrl+Enter on a coarse pointer, but not on plain Enter or while composing', async () => {
+  // iPadOS reports a coarse primary pointer even with a Magic Keyboard attached.
+  vi.stubGlobal('matchMedia', (query: string) => ({
+    matches: query === '(pointer: coarse)',
+    addEventListener() {},
+    removeEventListener() {},
+  }))
+  effects.push(store.watchConversation(19 as ConversationId))
+  await tick()
+  source(19).send('view', view(19, 'ipad transcript'))
+  const render = () => renderToStaticMarkup(scoped(19, h(Conversation)))
+  render()
+  async function enter(text: string, keys: object, nativeEvent = {}) {
+    harness.change!({ target: { value: text } })
+    render()
+    let prevented = false
+    harness.keyDown!({
+      key: 'Enter',
+      shiftKey: false,
+      altKey: false,
+      metaKey: false,
+      ctrlKey: false,
+      ...keys,
+      nativeEvent,
+      preventDefault: () => (prevented = true),
+    })
+    await tick()
+    return prevented
+  }
+  const sent = () =>
+    harness.fetch.mock.calls.flatMap(([path, init]) =>
+      path === '/api/conversations/19/submit' ? [JSON.parse(init!.body as string).text] : [],
+    )
+  // Plain Return on a touch keyboard keeps its newline; Return that commits an IME candidate never sends.
+  expect(await enter('plain', {})).toBe(false)
+  expect(await enter('composing', { metaKey: true }, { isComposing: true })).toBe(false)
+  expect(sent()).toEqual([])
+  expect(await enter('cmd', { metaKey: true })).toBe(true)
+  expect(await enter('ctrl', { ctrlKey: true })).toBe(true)
+  expect(sent()).toEqual(['cmd', 'ctrl'])
+})
+
 it('adds a view to a document-only subscription, keeps documents after the scope releases, and watches the view again from a snapshot', async () => {
-  const releaseDoc = store.watchDocOf(23, counter.kind)
+  const releaseDoc = store.watchDocOf(23 as ConversationId, counter.kind)
   effects.push(releaseDoc)
   await tick()
   const docs = source(23)
   docs.send('view', view(23, 'ignored'))
   docs.send('doc', { kind: counter.kind, value: { n: 1 } })
   expect(store.getState().viewsOf[23]).toBeUndefined()
-  const releaseView = store.watchConversation(23)
+  const releaseView = store.watchConversation(23 as ConversationId)
   await tick()
   expect(docs.closed).toBe(true)
   const both = source(23)
@@ -342,7 +388,7 @@ it('adds a view to a document-only subscription, keeps documents after the scope
   expect(store.getState().docsOf[23]?.[counter.kind]).toEqual({ n: 3 })
 
   // Watched again, the view comes from a new subscription's snapshot, and its ops apply to it.
-  effects.push(store.watchConversation(23))
+  effects.push(store.watchConversation(23 as ConversationId))
   await tick()
   expect(only.closed).toBe(true)
   const again = source(23)

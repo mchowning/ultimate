@@ -1,28 +1,24 @@
 import { CopyIcon, RefreshCwIcon } from 'lucide-react'
-import { useEffect } from 'react'
+import { useMemo } from 'react'
 import { Row, Rows } from '@/components/ui/rows'
 import {
   cn,
   elidePath,
   formatBytes,
   shortenPath,
+  keepLast,
   useAction,
   useConversation,
+  useConversationSummary,
   useSystem,
 } from '@/sdk'
 import { ConversationRef } from '../conversations/ui.tsx'
-import {
-  stateLabel,
-  useLanderQueue,
-  useWorkspaceConversations as useConversations,
-  useWorkspaces,
-} from './data.tsx'
+import { stateLabel, useLanderQueue, useWorkspaces } from './data.tsx'
 import type { WorkspaceConversation } from './data.tsx'
 import { DiskAction, InfoAction, StatsAction } from './refs.ts'
 
 const heading = 'mb-1 font-mono text-[10.5px] text-muted-foreground/70'
 
-/** One line for a collapsed section header: what lands now, else the shown conversation's checkout state. */
 export function useWorkspacesMeta() {
   const queue = useLanderQueue()
   const shown = useShown()
@@ -31,14 +27,11 @@ export function useWorkspacesMeta() {
 }
 
 function useShown() {
-  const id = useConversation().id
-  return useConversations().find((conversation) => conversation.id === id && conversation.workspace)
+  const summary = useConversationSummary(useConversation((conversation) => conversation.id))
+  const workspace = useWorkspaces()[String(summary?.id)]
+  return useMemo(() => summary && workspace && { ...summary, workspace }, [summary, workspace])
 }
 
-/**
- * Checkouts at a glance, for Info's Workspaces section: the lander's queue, the shown conversation's checkout, and
- * every checkout counted, with the disk they take.
- */
 export function Workspaces() {
   const shown = useShown()
   return (
@@ -56,20 +49,18 @@ export function Workspaces() {
   )
 }
 
-/** The shown conversation's checkout: path and branch to copy, target, commits ahead and the last landing. */
 function Checkout({ conversation }: { conversation: WorkspaceConversation }) {
-  const info = useAction(InfoAction, { id: conversation.id }, { onError: () => undefined })
-  const queued = useLanderQueue().find((item) => item.conversationId === conversation.id)
   const recorded = conversation.workspace!
+  const info = useAction(
+    InfoAction,
+    { id: conversation.id },
+    { onError: keepLast, on: [recorded.state, recorded.landed, conversation.busy] },
+  )
+  const queued = useLanderQueue().find((item) => item.conversationId === conversation.id)
   const workspace =
     info.data && info.data.state === recorded.state && info.data.landed === recorded.landed
       ? info.data
       : recorded
-  const { refetch } = info
-  useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void refetch()
-  }, [recorded.state, recorded.landed, conversation.busy, refetch])
   const ahead = info.data?.ahead
   const home = useSystem()?.machine.home
   return (
@@ -130,7 +121,6 @@ function Checkout({ conversation }: { conversation: WorkspaceConversation }) {
   )
 }
 
-/** A value that copies itself on click; `shown` is a shorter form to display. */
 function Copyable({ value, shown = value }: { value: string; shown?: string }) {
   return (
     <button
@@ -146,7 +136,6 @@ function Copyable({ value, shown = value }: { value: string; shown?: string }) {
   )
 }
 
-/** The lander's queue, oldest first: what each submission waits for or is doing now. */
 function LanderQueue() {
   const queue = useLanderQueue()
   if (!queue.length) return null
@@ -179,29 +168,13 @@ const parts = (entries: [number, string][]) =>
     .map(([count, label]) => `${count} ${label}`)
     .join(' · ') || 'none'
 
-/** How many checkouts there are, what their commits are, and the disk they take. */
 function Stats() {
   const records = useWorkspaces()
-  const { data, error, refetch } = useAction(StatsAction)
-  const disk = useAction(DiskAction)
-  const { refetch: refetchDisk } = disk
   const states = Object.entries(records)
     .map(([id, workspace]) => `${id}:${workspace.state}:${workspace.landed ?? ''}`)
     .join()
-  useEffect(() => {
-    // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-    void refetch()
-  }, [states, refetch])
-  useEffect(() => {
-    const refresh = () => {
-      // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-      void refetch()
-      // oxlint-disable-next-line typescript/no-floating-promises -- useAction reports failures and resolves undefined rather than rejecting.
-      void refetchDisk()
-    }
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
-  }, [refetch, refetchDisk])
+  const { data, error } = useAction(StatsAction, null, { on: states, focus: true })
+  const disk = useAction(DiskAction, null, { focus: true })
   if (error) return <p className="font-mono text-[11px] text-error">{error.message}</p>
   if (!data) return null
   return (
